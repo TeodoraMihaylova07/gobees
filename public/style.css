@@ -1,0 +1,14 @@
+#nav {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 10px;
+}
+
+#nav button {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+body { background: #fff8e1; color: #222; display: flex; justify-content: center; align-items: center; height: 100vh; } /* SCREENS */ .screen { width: 360px; padding: 25px; border-radius: 20px; background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; } .hidden { display: none; } /* TITLE */ h1 { color: #f4b400; margin-bottom: 20px; } /* INPUTS */ input { width: 100%; padding: 12px; margin: 8px 0; border-radius: 10px; border: 1px solid #ddd; font-size: 14px; } /* BUTTONS */ button { width: 100%; padding: 12px; margin-top: 10px; border: none; border-radius: 12px; background: #f4b400; color: #fff; font-weight: bold; cursor: pointer; transition: 0.2s; } button:hover { background: #d89c00; } /* LETTER GRID */ #letters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; } .letter { background: #ffcc00; border-radius: 12px; padding: 15px; font-size: 20px; font-weight: bold; cursor: pointer; transition: 0.2s; } .letter:hover { transform: scale(1.1); } /* GAME UI */ #timer { font-size: 28px; margin-bottom: 10px; } #score { margin-top: 10px; font-weight: bold; } #message { height: 20px; margin-top: 5px; } /* RANK */ #rank { margin-top: 15px; font-weight: bold; }

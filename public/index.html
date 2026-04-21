@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<title>🐝 GoBees</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+<div id="login-screen" class="screen">
+  <h1>🐝 GoBees</h1>
+
+  <input id="username" placeholder="Username">
+  <input id="password" type="password" placeholder="Password">
+
+  <button onclick="login()">Login</button>
+  <button onclick="register()">Register</button>
+  <button onclick="guest()">Play as Guest</button>
+</div>
+
+<div id="menu-screen" class="screen hidden">
+  <h2 id="nickname"></h2>
+  <div id="rank"></div>
+
+  <h3>🎮 Game Modes</h3>
+  <button onclick="showDifficulty()">Play vs PC</button>
+  <button onclick="showRooms()">Play with Friends</button>
+  <button onclick="randomMatch()">Play Random</button>
+
+  <h3>👤 Profile</h3>
+  <button onclick="showProfile()">Profile</button>
+
+  <button onclick="logout()">Logout</button>
+</div>
+
+<div id="difficulty-screen" class="screen hidden">
+  <h2>Select Difficulty</h2>
+  <button onclick="startGame('easy')">Easy</button>
+  <button onclick="startGame('medium')">Medium</button>
+  <button onclick="startGame('hard')">Hard</button>
+  <button onclick="show('menu')">Back</button>
+</div>
+
+<div id="game-screen" class="screen hidden">
+  <h2 id="timer">60</h2>
+
+  <div id="letters"></div>
+
+  <input id="wordInput">
+  <button onclick="submitWord()">Enter</button>
+
+  <h3 id="score">0</h3>
+</div>
+
+<div id="rooms-screen" class="screen hidden">
+  <h2>Rooms</h2>
+
+  <button onclick="createRoom()">Create Room</button>
+
+  <input id="roomCode" placeholder="Enter Code">
+  <button onclick="joinRoom()">Join</button>
+
+  <button onclick="show('menu')">Back</button>
+</div>
+
+<div id="profile-screen" class="screen hidden">
+  <h2 id="profileName"></h2>
+  <div id="profileRank"></div>
+
+  <h3>Achievements</h3>
+  <ul id="achievements"></ul>
+
+  <button onclick="show('menu')">Back</button>
+</div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
