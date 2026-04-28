@@ -8,11 +8,26 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-const hasDatabaseUrl = Boolean(process.env.DATABASE_URL);
+function getDatabaseUrl() {
+  const raw = String(process.env.DATABASE_URL || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    // Neon URLs can include channel_binding=require, which can fail
+    // in some serverless environments with pg.
+    url.searchParams.delete("channel_binding");
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
+const databaseUrl = getDatabaseUrl();
+const hasDatabaseUrl = Boolean(databaseUrl);
 const pool = new Pool(
   hasDatabaseUrl
     ? {
-        connectionString: process.env.DATABASE_URL,
+        connectionString: databaseUrl,
         ssl: { rejectUnauthorized: false }
       }
     : {
@@ -121,6 +136,9 @@ const EXTRA_BULGARIAN_WORDS = [
   "задача", "решение", "пример", "идея", "проект", "план", "цел", "стъпка", "напредък", "развитие",
   "начало", "среда", "край", "проблем", "помощ", "съвет", "избор", "шанс", "опит", "урок"
 ];
+const LOCAL_WORD_SET = new Set(
+  [...BULGARIAN_WORDS, ...EXTRA_BULGARIAN_WORDS].map((w) => String(w).trim().toLowerCase())
+);
 
 function normalizeWord(w) {
   return String(w || "").trim().toUpperCase();
@@ -278,7 +296,21 @@ app.post("/checkWord", async (req, res) => {
     const word = String(req.body.word || "").trim().toLowerCase();
     if (!/^[а-яѝ]+$/i.test(word)) return res.json({ valid: false });
 
-    const r = await fetch(`https://rechnik.chitanka.info/w/${encodeURIComponent(word)}`);
+    // Reliable local fallback for deployments where external dictionary
+    // blocks datacenter traffic.
+    if (LOCAL_WORD_SET.has(word)) {
+      return res.json({ valid: true });
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const r = await fetch(`https://rechnik.chitanka.info/w/${encodeURIComponent(word)}`, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "GoBees/1.0 (+vercel)"
+      }
+    });
+    clearTimeout(timeoutId);
     const text = await r.text();
     const hasEntrySections =
       text.includes('class="meaning box"') ||
