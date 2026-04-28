@@ -23,11 +23,12 @@
 <div id="menu-screen" class="screen hidden">
   <h2 id="nickname"></h2>
   <div id="rank"></div>
+  <div id="trophies"></div>
 
   <h3>🎮 Game Modes</h3>
   <button onclick="showDifficulty()">Play vs PC</button>
   <button onclick="showRooms()">Play with Friends</button>
-  <button onclick="randomMatch()">Play Random</button>
+  <button onclick="openRandomSetup()">Play Random</button>
 
   <h3>👤 Profile</h3>
   <button onclick="showProfile()">Profile</button>
@@ -37,32 +38,68 @@
 
 <div id="difficulty-screen" class="screen hidden">
   <h2>Select Difficulty</h2>
-  <button onclick="startGame('easy')">Easy</button>
-  <button onclick="startGame('medium')">Medium</button>
-  <button onclick="startGame('hard')">Hard</button>
+  <button onclick="startPcGame('easy')">Easy</button>
+  <button onclick="startPcGame('medium')">Medium</button>
+  <button onclick="startPcGame('hard')">Hard</button>
   <button onclick="show('menu')">Back</button>
 </div>
 
 <div id="game-screen" class="screen hidden">
+  <h3 id="gameModeTitle"></h3>
   <h2 id="timer">60</h2>
 
   <div id="letters"></div>
 
   <input id="wordInput">
   <button onclick="submitWord()">Enter</button>
+  <button onclick="deleteLastLetter()">Delete Last Letter</button>
+  <div id="message"></div>
 
   <h3 id="score">0</h3>
+  <div id="gameOpponentScore"></div>
+  <div id="gameOpponentWords"></div>
 </div>
 
 <div id="rooms-screen" class="screen hidden">
-  <h2>Rooms</h2>
+  <h2>Play with Friends</h2>
+
+  <h3>Duration</h3>
+  <button onclick="selectFriendDuration(60)">1 minute</button>
+  <button onclick="selectFriendDuration(180)">3 minutes</button>
+  <button onclick="selectFriendDuration(300)">5 minutes</button>
+  <button onclick="selectFriendDuration(600)">10 minutes</button>
+  <button onclick="selectFriendDuration(1200)">20 minutes</button>
+  <div id="friendDurationLabel">Selected: 1 min</div>
+
+  <h3>Room</h3>
 
   <button onclick="createRoom()">Create Room</button>
 
   <input id="roomCode" placeholder="Enter Code">
   <button onclick="joinRoom()">Join</button>
+  <button onclick="startFriendRoomGame()">Start Room Game</button>
+  <button onclick="leaveRoom()">Leave Room</button>
+  <div id="roomStatus"></div>
+  <div id="roomPlayers"></div>
 
   <button onclick="show('menu')">Back</button>
+</div>
+
+<div id="random-screen" class="screen hidden">
+  <h2>Random Ranked Match</h2>
+  <button onclick="setRandomSize(2)">1v1 (2 players)</button>
+  <button onclick="setRandomSize(5)">You vs 4 others</button>
+  <button onclick="setRandomSize(10)">You vs 9 others</button>
+  <div id="randomModeLabel">Selected: 2 players</div>
+  <button onclick="startRandomMatch()">Start Ranked Match</button>
+  <button onclick="show('menu')">Back</button>
+</div>
+
+<div id="result-screen" class="screen hidden">
+  <h2 id="resultTitle"></h2>
+  <h3 id="resultSubtitle"></h3>
+  <pre id="resultBody"></pre>
+  <button onclick="show('menu')">Back to Menu</button>
 </div>
 
 <div id="profile-screen" class="screen hidden">
