@@ -1,44 +1,11 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const { Pool } = require("pg");
 const { Redis } = require("@upstash/redis");
 const path = require("path");
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
-
-function getDatabaseUrl() {
-  const raw = String(process.env.DATABASE_URL || "").trim();
-  if (!raw) return "";
-  try {
-    const url = new URL(raw);
-    // Neon URLs can include channel_binding=require, which can fail
-    // in some serverless environments with pg.
-    url.searchParams.delete("channel_binding");
-    return url.toString();
-  } catch {
-    return raw;
-  }
-}
-
-const databaseUrl = getDatabaseUrl();
-const hasDatabaseUrl = Boolean(databaseUrl);
-const pool = new Pool(
-  hasDatabaseUrl
-    ? {
-        connectionString: databaseUrl,
-        ssl: { rejectUnauthorized: false }
-      }
-    : {
-        user: process.env.DB_USER,
-        host: process.env.DB_HOST,
-        database: process.env.DB_NAME,
-        password: process.env.DB_PASSWORD,
-        port: Number(process.env.DB_PORT) || 5432,
-        ssl: process.env.DB_SSL === "false" ? false : { rejectUnauthorized: false }
-      }
-);
 
 const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
   ? new Redis({
@@ -48,6 +15,65 @@ const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_RE
   : null;
 const memoryRooms = new Map();
 const ROOM_TTL_SECONDS = 60 * 60 * 24;
+
+const USER_SEQ_KEY = "gobees:user:seq";
+const userIdKey = (id) => `gobees:user:id:${id}`;
+const userNameKey = (username) =>
+  `gobees:user:name:${String(username || "").trim().toLowerCase()}`;
+
+const memoryUsersById = new Map();
+const memoryNameToId = new Map();
+let memoryNextUserId = 1;
+
+async function allocateUserId() {
+  if (redis) return redis.incr(USER_SEQ_KEY);
+  return memoryNextUserId++;
+}
+
+async function persistUserRecord(rec) {
+  const copy = { ...rec };
+  if (redis) {
+    await redis.set(userIdKey(copy.id), JSON.stringify(copy));
+    await redis.set(userNameKey(copy.username), String(copy.id));
+    return;
+  }
+  memoryUsersById.set(copy.id, copy);
+  memoryNameToId.set(String(copy.username).trim().toLowerCase(), copy.id);
+}
+
+async function loadUserById(id) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n < 1) return null;
+  if (redis) {
+    const raw = await redis.get(userIdKey(n));
+    if (raw == null) return null;
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  }
+  return memoryUsersById.get(n) || null;
+}
+
+async function loadUserByUsername(username) {
+  const key = String(username || "").trim().toLowerCase();
+  if (!key) return null;
+  if (redis) {
+    const idRaw = await redis.get(userNameKey(key));
+    if (idRaw == null || idRaw === "") return null;
+    return await loadUserById(Number(idRaw));
+  }
+  const id = memoryNameToId.get(key);
+  return id ? memoryUsersById.get(id) || null : null;
+}
+
+function publicUser(rec) {
+  return {
+    id: rec.id,
+    username: rec.username,
+    nickname: rec.nickname,
+    email: rec.email,
+    trophies: rec.trophies,
+    friends: rec.friends || ""
+  };
+}
 
 function roomKey(code) {
   return `room:${String(code || "").toUpperCase()}`;
@@ -136,10 +162,6 @@ const EXTRA_BULGARIAN_WORDS = [
   "задача", "решение", "пример", "идея", "проект", "план", "цел", "стъпка", "напредък", "развитие",
   "начало", "среда", "край", "проблем", "помощ", "съвет", "избор", "шанс", "опит", "урок"
 ];
-const LOCAL_WORD_SET = new Set(
-  [...BULGARIAN_WORDS, ...EXTRA_BULGARIAN_WORDS].map((w) => String(w).trim().toLowerCase())
-);
-
 function normalizeWord(w) {
   return String(w || "").trim().toUpperCase();
 }
@@ -214,56 +236,81 @@ app.post("/register", async (req, res) => {
   const { username, nickname, email, password } = req.body;
 
   try {
-    const exists = await pool.query("SELECT id FROM users WHERE username=$1", [username]);
-    if (exists.rows.length > 0) return res.json({ error: "Username taken" });
+    if (!redis && process.env.VERCEL === "1") {
+      return res.json({
+        error:
+          "Add Upstash Redis on Vercel (UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN) for accounts."
+      });
+    }
+    const u = String(username || "").trim();
+    const n = String(nickname || "").trim();
+    const e = String(email || "").trim();
+    if (!u || !n || !e || !password) return res.json({ error: "All fields required" });
 
-    const hash = await bcrypt.hash(password, 10);
-    await pool.query(
-      "INSERT INTO users (username, nickname, email, password, trophies, friends) VALUES ($1,$2,$3,$4,0,'')",
-      [username, nickname, email, hash]
-    );
+    const exists = await loadUserByUsername(u);
+    if (exists) return res.json({ error: "Username taken" });
+
+    const id = await allocateUserId();
+    const hash = await bcrypt.hash(String(password), 10);
+    const rec = {
+      id,
+      username: u,
+      nickname: n,
+      email: e,
+      password: hash,
+      trophies: 0,
+      friends: ""
+    };
+    await persistUserRecord(rec);
     res.json({ success: true });
   } catch {
-    res.json({ error: "DB error" });
+    res.json({ error: "Could not register" });
   }
 });
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   try {
-    const r = await pool.query("SELECT * FROM users WHERE username=$1", [username]);
-    if (r.rows.length === 0) return res.json({ error: "No user" });
-    const user = r.rows[0];
-    const ok = await bcrypt.compare(password, user.password);
+    if (!redis && process.env.VERCEL === "1") {
+      return res.json({
+        error:
+          "Add Upstash Redis on Vercel (UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN) for accounts."
+      });
+    }
+    const user = await loadUserByUsername(username);
+    if (!user) return res.json({ error: "No user" });
+    const ok = await bcrypt.compare(String(password || ""), user.password);
     if (!ok) return res.json({ error: "Wrong password" });
-    res.json(user);
+    res.json(publicUser(user));
   } catch {
-    res.json({ error: "DB error" });
+    res.json({ error: "Could not log in" });
   }
 });
 
 app.post("/addFriend", async (req, res) => {
   const { userId, friendUsername } = req.body;
   try {
-    const r = await pool.query("SELECT id FROM users WHERE username=$1", [friendUsername]);
-    if (r.rows.length === 0) return res.json({ error: "No such user" });
+    const friend = await loadUserByUsername(friendUsername);
+    if (!friend) return res.json({ error: "No such user" });
 
-    const friendId = r.rows[0].id;
-    const user = await pool.query("SELECT friends FROM users WHERE id=$1", [userId]);
-    const friend = await pool.query("SELECT friends FROM users WHERE id=$1", [friendId]);
+    const friendId = friend.id;
+    const user = await loadUserById(userId);
+    if (!user) return res.json({ error: "No such user" });
 
-    const userFriends = user.rows[0].friends.split(",").filter((x) => x);
-    const friendFriends = friend.rows[0].friends.split(",").filter((x) => x);
+    const userFriends = String(user.friends || "").split(",").filter((x) => x);
+    const friendFriends = String(friend.friends || "").split(",").filter((x) => x);
 
     if (!friendFriends.includes(String(userId))) {
       friendFriends.push(String(userId));
-      await pool.query("UPDATE users SET friends=$1 WHERE id=$2", [friendFriends.join(","), friendId]);
+      friend.friends = friendFriends.join(",");
     }
     if (!userFriends.includes(String(friendId))) {
       userFriends.push(String(friendId));
-      await pool.query("UPDATE users SET friends=$1 WHERE id=$2", [userFriends.join(","), userId]);
+      user.friends = userFriends.join(",");
     }
 
+    await persistUserRecord(user);
+    await persistUserRecord(friend);
     res.json({ success: true });
   } catch {
     res.json({ error: "friend error" });
@@ -275,48 +322,59 @@ app.get("/friends/:id", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.json([]);
 
-    const r = await pool.query("SELECT friends FROM users WHERE id=$1", [id]);
-    if (r.rows.length === 0) return res.json([]);
+    const u = await loadUserById(id);
+    if (!u) return res.json([]);
 
-    const ids = String(r.rows[0].friends || "")
+    const ids = String(u.friends || "")
       .split(",")
       .map((x) => Number(String(x).trim()))
       .filter((n) => Number.isInteger(n) && n > 0);
     if (ids.length === 0) return res.json([]);
 
-    const friends = await pool.query("SELECT nickname FROM users WHERE id = ANY($1::int[])", [ids]);
-    res.json(friends.rows);
+    const rows = [];
+    for (const fid of ids) {
+      const f = await loadUserById(fid);
+      if (f) rows.push({ nickname: f.nickname });
+    }
+    res.json(rows);
   } catch {
     res.json([]);
   }
 });
+
+function isChitankaDictionaryEntry(html) {
+  if (!html || typeof html !== "string") return false;
+  const t = html.toLowerCase();
+  if (t.includes("няма намерена статия") || t.includes("няма намерени статии")) return false;
+  if (t.includes("page not found")) return false;
+  return (
+    html.includes('class="meaning box"') ||
+    html.includes('class="derivative-forms box"') ||
+    html.includes('class="synonyms box"') ||
+    html.includes('class="etymology box"') ||
+    html.includes('class="pronunciation box"')
+  );
+}
 
 app.post("/checkWord", async (req, res) => {
   try {
     const word = String(req.body.word || "").trim().toLowerCase();
     if (!/^[а-яѝ]+$/i.test(word)) return res.json({ valid: false });
 
-    // Reliable local fallback for deployments where external dictionary
-    // blocks datacenter traffic.
-    if (LOCAL_WORD_SET.has(word)) {
-      return res.json({ valid: true });
-    }
-
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     const r = await fetch(`https://rechnik.chitanka.info/w/${encodeURIComponent(word)}`, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "GoBees/1.0 (+vercel)"
+        "User-Agent": "GoBees/1.0",
+        Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "bg,en;q=0.8"
       }
     });
     clearTimeout(timeoutId);
+    if (!r.ok) return res.json({ valid: false });
     const text = await r.text();
-    const hasEntrySections =
-      text.includes('class="meaning box"') ||
-      text.includes('class="derivative-forms box"') ||
-      text.includes('class="synonyms box"');
-    res.json({ valid: hasEntrySections });
+    res.json({ valid: isChitankaDictionaryEntry(text) });
   } catch {
     res.json({ valid: false });
   }
@@ -353,10 +411,13 @@ app.post("/updateTrophies", async (req, res) => {
     const userId = Number(req.body.userId);
     const trophies = Math.max(0, Number(req.body.trophies) || 0);
     if (!userId) return res.json({ error: "Missing userId" });
-    await pool.query("UPDATE users SET trophies=$1 WHERE id=$2", [trophies, userId]);
+    const user = await loadUserById(userId);
+    if (!user) return res.json({ error: "No user" });
+    user.trophies = trophies;
+    await persistUserRecord(user);
     res.json({ success: true, trophies });
   } catch {
-    res.json({ error: "DB error" });
+    res.json({ error: "Could not update trophies" });
   }
 });
 
@@ -475,6 +536,50 @@ app.post("/rooms/:code/leave", async (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+app.post("/achievements/check", async (req, res) => {
+  const { userId, isWin } = req.body;
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
+  try {
+    const user = await loadUserById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    user.achievements = Array.isArray(user.achievements) ? user.achievements : [];
+    const newAchievements = [];
+
+    if (!user.achievements.includes("first_game")) {
+      user.achievements.push("first_game");
+      newAchievements.push({ id: "first_game", name: "First Game" });
+    }
+
+    if (isWin && !user.achievements.includes("first_win")) {
+      user.achievements.push("first_win");
+      newAchievements.push({ id: "first_win", name: "First Win" });
+    }
+
+    await persistUserRecord(user);
+
+    res.json({
+      newAchievements,
+      allAchievements: user.achievements.map((id) => ({
+        id,
+        name:
+          id === "first_game"
+            ? "First Game"
+            : id === "first_win"
+            ? "First Win"
+            : id
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = app;

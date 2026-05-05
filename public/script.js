@@ -13,6 +13,7 @@ let activeRoomCode = null;
 let roomDurationSeconds = 60;
 let roomPollTimer = null;
 let currentRoomState = null;
+let achievements = [];
 
 function byId(id) {
   return document.getElementById(id);
@@ -55,13 +56,27 @@ async function login() {
 }
 
 async function register() {
-  const username = prompt("Username:");
-  const nickname = prompt("Nickname:");
-  const email = prompt("Email:");
-  const password = prompt("Password:");
+  const username = byId("regUsername").value.trim();
+  const nickname = byId("regNickname").value.trim();
+  const email = byId("regEmail").value.trim();
+  const password = byId("regPassword").value;
 
   if (!username || !nickname || !email || !password) {
     alert("All fields are required.");
+    return;
+  }
+
+  // Add email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    alert("Please enter a valid email address.");
+    return;
+  }
+
+  // Add password validation
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  if (!passwordRegex.test(password)) {
+    alert("Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character.");
     return;
   }
 
@@ -71,7 +86,14 @@ async function register() {
     body: JSON.stringify({ username, nickname, email, password })
   });
   const data = await res.json();
-  alert(data.error || "Registered successfully");
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  byId("regPassword").value = "";
+  byId("username").value = username;
+  alert("Registered successfully. You can log in now.");
+  show("login");
 }
 
 function guest() {
@@ -322,8 +344,15 @@ async function finishPcGame() {
   pcScore = pcWords.reduce((sum, w) => sum + calculatePoints(w.length), 0);
 
   let result = "Draw";
-  if (score > pcScore) result = "You win vs PC";
+  let isWin = false;
+  if (score > pcScore) {
+    result = "You win vs PC";
+    isWin = true;
+  }
   if (score < pcScore) result = "You lose vs PC";
+
+  // Check achievements and wait for it to complete
+  await checkAchievements(isWin);
 
   showResults({
     title: "Vs PC Result",
@@ -387,6 +416,10 @@ async function finishRandomGame() {
   const myPlace = Math.max(1, lobby.findIndex((p) => p.nickname === playerName()) + 1);
   const delta = randomDeltaByPlacement(randomLobbySize, myPlace);
   await updateUserTrophies(delta);
+
+  // Check achievements and wait for it to complete
+  const isWin = myPlace === 1;
+  await checkAchievements(isWin);
 
   const lines = lobby.map((p, idx) => `${idx + 1}. ${p.nickname} - ${p.score} pts - ${p.words.join(", ") || "-"}`);
   lines.unshift(`You finished #${myPlace} (${delta >= 0 ? "+" : ""}${delta} trophies)`);
@@ -524,6 +557,11 @@ async function finishFriendGame() {
   const data = await finalRes.json();
   const rows = (data.players || []).sort((a, b) => b.score - a.score);
   const winner = rows[0]?.nickname || "No winner";
+  const isWin = winner === playerName();
+
+  // Check achievements and wait for it to complete
+  await checkAchievements(isWin);
+
   const lines = rows.map((p, idx) => `${idx + 1}. ${p.nickname} - ${p.score} pts - ${p.words.join(", ") || "-"}`);
 
   showResults({
@@ -543,60 +581,115 @@ async function finishFriendGame() {
   roomPollTimer = null;
 }
 
-function setRandomSize(size) {
-  randomLobbySize = size;
-  byId("randomModeLabel").innerText = `Selected: ${size} players`;
-}
-
-function openRandomSetup() {
-  show("random");
-}
-
-function showResults({ title, subtitle, lines }) {
-  byId("resultTitle").innerText = title;
-  byId("resultSubtitle").innerText = subtitle;
-  byId("resultBody").innerText = lines.join("\n");
-  show("result");
-}
-
-async function addFriend() {
-  const username = prompt("Enter friend's username:");
-  if (!username || !currentUser?.id) return;
-
-  await fetch("/addFriend", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      userId: currentUser.id,
-      friendUsername: username.trim()
-    })
-  });
-  await loadFriends();
-}
-
-async function loadFriends() {
-  if (!currentUser?.id) return;
-  const res = await fetch("/friends/" + currentUser.id);
-  const data = await res.json();
-
-  const list = byId("achievements");
-  list.innerHTML = "";
-  data.forEach((f) => {
-    const li = document.createElement("li");
-    li.innerText = f.nickname;
-    list.appendChild(li);
-  });
-}
-
 function showProfile() {
   byId("profileName").innerText = playerName();
   byId("profileRank").innerText = `${getRank(currentUser?.trophies || 0)} (${currentUser?.trophies || 0} trophies)`;
-  loadFriends();
+  
+  // Display achievements
+  const achievementsList = byId("achievements");
+  if (achievements.length > 0) {
+    achievementsList.innerHTML = achievements.map(a => `<li>🏆 ${a.name}</li>`).join("");
+  } else {
+    achievementsList.innerHTML = "<li>No achievements yet. Play games to unlock!</li>";
+  }
+  
   show("profile");
 }
 
-document.addEventListener("keypress", (e) => {
-  if (e.key === "Enter" && !byId("game-screen").classList.contains("hidden")) {
-    submitWord();
+async function checkAchievements(isWin) {
+  if (!currentUser?.id) {
+    // Guest user - skip achievements but continue
+    return;
   }
-});
+
+  try {
+    const res = await fetch("/achievements/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: currentUser.id,
+        isWin
+      })
+    });
+    const data = await res.json();
+
+    if (data.newAchievements && data.newAchievements.length > 0) {
+      const achievementNames = data.newAchievements.map(a => a.name).join(", ");
+      showAchievementNotification(`🏆 Achievement Unlocked: ${achievementNames}`);
+      achievements = data.allAchievements || [];
+    }
+  } catch (err) {
+    console.error("Error checking achievements:", err);
+  }
+}
+
+function showAchievementNotification(message) {
+  const notification = document.createElement("div");
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #f4b400, #ffcf2f);
+    color: #1d1d22;
+    padding: 16px 24px;
+    border-radius: 12px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+    font-weight: bold;
+    z-index: 10000;
+    animation: slideIn 0.3s ease-out;
+  `;
+  notification.innerText = message;
+  document.body.appendChild(notification);
+
+  setTimeout(() => {
+    notification.style.animation = "slideOut 0.3s ease-out";
+    setTimeout(() => notification.remove(), 300);
+  }, 3000);
+}
+
+// Add animations to HTML head
+if (!document.querySelector("style[data-achievements]")) {
+  const style = document.createElement("style");
+  style.setAttribute("data-achievements", "true");
+  style.textContent = `
+    @keyframes slideIn {
+      from {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    @keyframes slideOut {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function showResults(obj) {
+  const lines = obj.lines || [];
+  byId("resultBody").innerHTML = lines.map(line => `<p>${line}</p>`).join("");
+  
+  const resultScreen = byId("result-screen");
+  if (resultScreen) {
+    const titleEl = resultScreen.querySelector("h2") || document.createElement("h2");
+    titleEl.innerText = obj.title || "Result";
+    if (!resultScreen.querySelector("h2")) resultScreen.prepend(titleEl);
+    
+    const subtitleEl = resultScreen.querySelector("h3") || document.createElement("h3");
+    subtitleEl.innerText = obj.subtitle || "";
+    if (!resultScreen.querySelector("h3")) resultScreen.insertBefore(subtitleEl, byId("resultBody"));
+  }
+  
+  show("result");
+}

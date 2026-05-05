@@ -2,6 +2,8 @@
 <html lang="bg">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4b400">
 <title>🐝 GoBees</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -12,12 +14,24 @@
 <div id="login-screen" class="screen">
   <h1>🐝 GoBees</h1>
 
-  <input id="username" placeholder="Username">
-  <input id="password" type="password" placeholder="Password">
+  <input id="username" type="text" placeholder="Username" autocomplete="username" inputmode="text">
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password">
 
-  <button onclick="login()">Login</button>
-  <button onclick="register()">Register</button>
-  <button onclick="guest()">Play as Guest</button>
+  <button type="button" onclick="login()">Login</button>
+  <button type="button" class="btn-secondary" onclick="show('register')">Register</button>
+  <button type="button" class="btn-secondary" onclick="guest()">Play as Guest</button>
+</div>
+
+<div id="register-screen" class="screen hidden">
+  <h1>🐝 Create account</h1>
+
+  <input id="regUsername" type="text" placeholder="Username" autocomplete="username" inputmode="text">
+  <input id="regNickname" type="text" placeholder="Nickname (display name)" autocomplete="nickname">
+  <input id="regEmail" type="email" placeholder="Email" autocomplete="email" inputmode="email">
+  <input id="regPassword" type="password" placeholder="Password" autocomplete="new-password">
+
+  <button type="button" onclick="register()">Create account</button>
+  <button type="button" class="btn-secondary" onclick="show('login')">Back to login</button>
 </div>
 
 <div id="menu-screen" class="screen hidden">
@@ -50,9 +64,11 @@
 
   <div id="letters"></div>
 
-  <input id="wordInput">
-  <button onclick="submitWord()">Enter</button>
-  <button onclick="deleteLastLetter()">Delete Last Letter</button>
+  <input id="wordInput" type="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done">
+  <div class="game-actions">
+    <button type="button" onclick="submitWord()">Enter</button>
+    <button type="button" class="btn-secondary" onclick="deleteLastLetter()">Delete last letter</button>
+  </div>
   <div id="message"></div>
 
   <h3 id="score">0</h3>
